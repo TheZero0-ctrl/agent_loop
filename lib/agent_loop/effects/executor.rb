@@ -5,9 +5,11 @@ module AgentLoop
     class Executor
       class UnsupportedEffect < StandardError; end
 
-      def initialize(emit_adapter:, scheduler_adapter: AgentLoop::Adapters::Scheduler::Inline.new)
+      def initialize(emit_adapter:, scheduler_adapter: AgentLoop::Adapters::Scheduler::Inline.new,
+                     tool_adapter: AgentLoop::Adapters::Tools::Null.new)
         @emit_adapter = emit_adapter
         @scheduler_adapter = scheduler_adapter
+        @tool_adapter = tool_adapter
       end
 
       def execute_all(effects, instance:, runtime:)
@@ -17,8 +19,13 @@ module AgentLoop
       end
 
       def execute(effect, instance:, runtime:)
-        AgentLoop::Notifications.instrument('agent_loop.effect', instance_id: instance.id,
-                                                                 effect_type: effect.class.name) do
+        payload = {
+          instance_id: instance.id,
+          agent_class: instance.agent_class.to_s,
+          effect_type: effect.class.name
+        }
+
+        AgentLoop::Notifications.instrument_lifecycle("agent_loop.effect", payload) do
           case effect
           when AgentLoop::Effects::Emit
             signal = AgentLoop::Signal.new(type: effect.type, data: effect.data, source: "agent://#{instance.id}")
@@ -31,6 +38,14 @@ module AgentLoop
             instance.status = :stopped
             instance.metadata[:stop_reason] = effect.reason
             :ok
+          when AgentLoop::Effects::Error
+            instance.status = :failed
+            instance.metadata[:last_error] = {
+              code: effect.code,
+              message: effect.message,
+              details: effect.details
+            }
+            :ok
           when AgentLoop::Effects::Spawn
             child = AgentLoop::Instance.new(
               agent_class: effect.agent_class,
@@ -40,14 +55,61 @@ module AgentLoop
               metadata: { parent_id: instance.id }
             )
             instance.children[effect.id] = child
+            emit_child_signal("agent_loop.child.started", instance: instance, child: child)
             :ok
           when AgentLoop::Effects::RunTool
-            # Stub behavior for MVP. Wire your tool adapter here.
-            :ok
+            run_tool_effect(effect, instance: instance, runtime: runtime)
           else
             raise UnsupportedEffect, "Unsupported effect: #{effect.class}"
           end
         end
+      end
+
+      private
+
+      def run_tool_effect(effect, instance:, runtime:)
+        output = @tool_adapter.run(name: effect.name, input: effect.input, instance: instance, runtime: runtime)
+        callback_event = effect.callback_event
+        return output unless callback_event
+
+        signal = build_callback_signal(callback_event, instance: instance, tool_name: effect.name, output: output)
+        runtime.call(instance, signal)
+        output
+      end
+
+      def build_callback_signal(callback_event, instance:, tool_name:, output:)
+        case callback_event
+        when String, Symbol
+          AgentLoop::Signal.new(
+            type: callback_event.to_s,
+            source: "tool://#{tool_name}",
+            data: { "result" => output },
+            metadata: { causation_id: instance.id }
+          )
+        when Hash
+          AgentLoop::Signal.new(
+            type: callback_event.fetch(:type).to_s,
+            source: callback_event.fetch(:source, "tool://#{tool_name}"),
+            data: callback_event.fetch(:data, {}).merge("result" => output),
+            metadata: callback_event.fetch(:metadata, { causation_id: instance.id })
+          )
+        else
+          raise UnsupportedEffect, "Unsupported callback event descriptor: #{callback_event.inspect}"
+        end
+      end
+
+      def emit_child_signal(type, instance:, child:)
+        signal = AgentLoop::Signal.new(
+          type: type,
+          source: "agent://#{instance.id}",
+          data: {
+            parent_id: instance.id,
+            child_id: child.id,
+            child_class: child.agent_class.to_s
+          }
+        )
+
+        @emit_adapter.emit(signal, target: instance.id)
       end
     end
   end

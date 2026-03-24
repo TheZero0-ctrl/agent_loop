@@ -3,12 +3,12 @@
 module AgentLoop
   module Effects
     class RunTool < Base
-      attr_reader :name, :input, :on_result
+      attr_reader :name, :input, :callback_event
 
-      def initialize(name:, input:, on_result: nil)
+      def initialize(name:, input:, callback_event: nil, on_result: nil)
         @name = name
         @input = input
-        @on_result = on_result
+        @callback_event = callback_event || on_result
       end
     end
   end

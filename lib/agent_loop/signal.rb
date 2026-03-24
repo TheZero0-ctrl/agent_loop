@@ -15,5 +15,9 @@ module AgentLoop
       @time = time
       @metadata = metadata
     end
+
+    def meta
+      metadata
+    end
   end
 end
