@@ -7,7 +7,7 @@ class TestAgentLoop < Minitest::Test
     refute_nil ::AgentLoop::VERSION
   end
 
-  def test_it_does_something_useful
-    assert false
+  def test_it_loads_core_runtime
+    assert defined?(::AgentLoop::Runtime)
   end
 end
