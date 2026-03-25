@@ -3,7 +3,7 @@
 module AgentLoop
   module Adapters
     class Tool
-      def run(_name:, _input:, _instance:, _runtime:)
+      def run(_name:, _input:, _instance:, _runtime:, _meta: {})
         raise NotImplementedError
       end
     end

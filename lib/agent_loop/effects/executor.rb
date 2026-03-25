@@ -68,30 +68,48 @@ module AgentLoop
       private
 
       def run_tool_effect(effect, instance:, runtime:)
-        output = @tool_adapter.run(name: effect.name, input: effect.input, instance: instance, runtime: runtime)
+        output = @tool_adapter.run(name: effect.name, input: effect.input, instance: instance, runtime: runtime,
+                                   meta: effect.meta)
         callback_event = effect.callback_event
         return output unless callback_event
 
-        signal = build_callback_signal(callback_event, instance: instance, tool_name: effect.name, output: output)
+        signal = build_callback_signal(callback_event, instance: instance, tool_name: effect.name, output: output,
+                                                       meta: effect.meta)
         runtime.call(instance, signal)
         output
       end
 
-      def build_callback_signal(callback_event, instance:, tool_name:, output:)
+      def build_callback_signal(callback_event, instance:, tool_name:, output:, meta: {})
+        metadata = {
+          causation_id: instance.id,
+          tool_call_id: meta[:tool_call_id],
+          trace_id: meta[:trace_id],
+          correlation_id: meta[:correlation_id]
+        }.compact
+
+        payload = {
+          "result" => output,
+          "tool_call_id" => meta[:tool_call_id],
+          "tool_name" => tool_name,
+          "action_class" => meta[:action_class],
+          "action_ref" => meta[:action_ref],
+          "requested_at" => meta[:requested_at]
+        }.compact
+
         case callback_event
         when String, Symbol
           AgentLoop::Signal.new(
             type: callback_event.to_s,
             source: "tool://#{tool_name}",
-            data: { "result" => output },
-            metadata: { causation_id: instance.id }
+            data: payload,
+            metadata: metadata
           )
         when Hash
           AgentLoop::Signal.new(
             type: callback_event.fetch(:type).to_s,
             source: callback_event.fetch(:source, "tool://#{tool_name}"),
-            data: callback_event.fetch(:data, {}).merge("result" => output),
-            metadata: callback_event.fetch(:metadata, { causation_id: instance.id })
+            data: callback_event.fetch(:data, {}).merge(payload),
+            metadata: metadata.merge(callback_event.fetch(:metadata, {}))
           )
         else
           raise UnsupportedEffect, "Unsupported callback event descriptor: #{callback_event.inspect}"

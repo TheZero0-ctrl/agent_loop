@@ -15,6 +15,15 @@ module AgentLoop
       end
     end
 
+    class InvalidOutput < StandardError
+      attr_reader :details
+
+      def initialize(message, details: {})
+        super(message)
+        @details = details
+      end
+    end
+
     class << self
       def name(value = UNSET)
         return @action_name = value unless value.equal?(UNSET)
@@ -40,6 +49,53 @@ module AgentLoop
         @schema_defaults || {}
       end
 
+      def param_descriptions(value = UNSET)
+        return @param_descriptions = value unless value.equal?(UNSET)
+
+        @param_descriptions || {}
+      end
+
+      def output_schema(value = UNSET, defaults: nil, &block)
+        @output_schema = value unless value.equal?(UNSET)
+        @output_schema = Dry::Schema.Params(&block) if block
+        @output_schema_defaults = defaults if defaults
+        @output_schema
+      end
+
+      def output_schema_defaults
+        @output_schema_defaults || {}
+      end
+
+      def strict(value = UNSET)
+        return @strict = value unless value.equal?(UNSET)
+
+        @strict == true
+      end
+
+      def strict?
+        strict
+      end
+
+      def parameters_json_schema(strict: nil)
+        return nil unless @params_schema
+
+        strict_mode = strict.nil? ? strict? : strict
+        AgentLoop::Action::Schema.to_json_schema(
+          schema: @params_schema,
+          defaults: schema_defaults,
+          descriptions: param_descriptions,
+          strict: strict_mode
+        )
+      end
+
+      def to_tool(strict: nil)
+        {
+          name: name.to_s,
+          description: description,
+          parameters: parameters_json_schema(strict: strict)
+        }
+      end
+
       def call(params:, state:, context: {})
         validated_params = validate_params!(params)
         action_context = context.merge(state: state)
@@ -59,9 +115,20 @@ module AgentLoop
         return input unless @params_schema
 
         result = @params_schema.call(input)
-        return result.to_h if result.success?
+        return deep_merge(input, result.to_h) if result.success?
 
         raise InvalidParams.new("Action params validation failed", details: result.errors.to_h)
+      end
+
+      def validate_output!(output)
+        normalized_output = deep_symbolize_keys(output || {})
+        input = output_schema_defaults.merge(normalized_output)
+        return input unless @output_schema
+
+        result = @output_schema.call(input)
+        return deep_merge(input, result.to_h) if result.success?
+
+        raise InvalidOutput.new("Action output validation failed", details: result.errors.to_h)
       end
 
       def normalize_output(previous_state, output)
@@ -73,7 +140,8 @@ module AgentLoop
                                 [output, []]
                               end
 
-        state = deep_merge(previous_state, deep_symbolize_keys(next_state || {}))
+        validated_output = validate_output!(next_state || {})
+        state = deep_merge(previous_state, validated_output)
         AgentLoop::Result.new(state: state, effects: effects)
       end
 

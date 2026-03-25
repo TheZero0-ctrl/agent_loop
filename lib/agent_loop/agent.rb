@@ -59,16 +59,34 @@ module AgentLoop
       def cmd(agent, instruction, context: {})
         raise ArgumentError, "Expected agent to be an instance of #{self}, got #{agent.class}" unless agent.is_a?(self)
 
-        parsed_instruction = parse_instruction(instruction)
+        parsed_instructions = parse_instructions(instruction)
+        chain_mode = instruction_chain?(instruction)
         evaluator = new
-        result = evaluator.cmd(agent.state, parsed_instruction, context: context)
-        final_state = AgentLoop::StateOps::Applicator.new.apply_all(result.state, result.state_ops)
+        state_op_applicator = AgentLoop::StateOps::Applicator.new
+
+        current_state = agent.state
+        collected_effects = []
+
+        parsed_instructions.each do |entry|
+          step_instruction = build_step_instruction(entry, current_state, chain_mode: chain_mode)
+          merged_context = build_instruction_context(context, entry)
+          result = evaluator.cmd(current_state, step_instruction, context: merged_context)
+          current_state = state_op_applicator.apply_all(result.state, result.state_ops)
+          collected_effects.concat(result.effects)
+        end
+
+        final_state = current_state
         validated_state = validate_state!(final_state)
-        [agent.with_state(validated_state), result.effects]
+        [agent.with_state(validated_state), collected_effects]
       rescue AgentLoop::Action::InvalidParams => e
         [
           agent,
           [AgentLoop::Effects::Error.new(code: :invalid_action_params, message: e.message, details: e.details)]
+        ]
+      rescue AgentLoop::Action::InvalidOutput => e
+        [
+          agent,
+          [AgentLoop::Effects::Error.new(code: :invalid_action_output, message: e.message, details: e.details)]
         ]
       rescue AgentLoop::Agent::InvalidState => e
         [
@@ -87,18 +105,34 @@ module AgentLoop
 
       private
 
-      def parse_instruction(instruction)
-        return instruction if instruction.is_a?(AgentLoop::Instruction)
+      def parse_instructions(instruction)
+        AgentLoop::Instruction.normalize(instruction)
+      end
 
-        action, params = instruction
-        AgentLoop::Instruction.new(action: action, params: params)
+      def instruction_chain?(instruction)
+        instruction.is_a?(Array) && !AgentLoop::Instruction.tuple_instruction?(instruction)
+      end
+
+      def build_step_instruction(instruction, current_state, chain_mode:)
+        return instruction unless chain_mode
+
+        merged_params = deep_merge(current_state, instruction.params || {})
+        instruction.with(params: merged_params)
+      end
+
+      def build_instruction_context(base_context, instruction)
+        merged = base_context.merge(instruction.context || {})
+        return merged if instruction.opts.nil? || instruction.opts == {} || instruction.opts == []
+
+        merged.merge(opts: instruction.opts)
       end
 
       def validate_state!(state)
-        return deep_dup(state) unless @state_schema
+        input = deep_dup(state)
+        return input unless @state_schema
 
-        result = @state_schema.call(state)
-        return result.to_h if result.success?
+        result = @state_schema.call(input)
+        return deep_merge(input, result.to_h) if result.success?
 
         raise AgentLoop::Agent::InvalidState.new("State schema validation failed", details: result.errors.to_h)
       end
