@@ -3,6 +3,7 @@ PATH
   specs:
     agent_loop (0.1.0)
       dry-schema (~> 1.14)
+      uuid7 (~> 0.2)
       zeitwerk (~> 2.7)
 
 GEM
@@ -103,6 +104,8 @@ GEM
     unicode-display_width (3.2.0)
       unicode-emoji (~> 4.1)
     unicode-emoji (4.2.0)
+    uuid7 (0.2.0)
+      zeitwerk (~> 2.4)
     zeitwerk (2.7.5)
 
 PLATFORMS
@@ -115,6 +118,7 @@ DEPENDENCIES
   minitest (~> 5.16)
   rake (~> 13.0)
   rubocop (~> 1.21)
+  uuid7 (~> 0.2.0)
 
 BUNDLED WITH
    2.7.2

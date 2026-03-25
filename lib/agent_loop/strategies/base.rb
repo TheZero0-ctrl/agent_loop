@@ -6,6 +6,10 @@ module AgentLoop
       def cmd(agent:, state:, instruction:, context:)
         raise NotImplementedError
       end
+
+      def signal_routes(_context = {})
+        []
+      end
     end
   end
 end

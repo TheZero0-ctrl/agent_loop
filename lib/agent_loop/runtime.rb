@@ -2,18 +2,20 @@
 
 module AgentLoop
   class Runtime
-    attr_reader :router, :effect_executor, :state_store, :state_op_applicator, :strategy, :event_store
+    attr_reader :router, :effect_executor, :state_store, :state_op_applicator, :strategy, :event_store, :signal_queue
 
     def initialize(effect_executor:, router: Router.new, state_store: AgentLoop::StateStores::InMemory.new,
                    state_op_applicator: AgentLoop::StateOps::Applicator.new,
                    strategy: AgentLoop::Strategies::Direct.new,
-                   event_store: AgentLoop::EventStores::InMemory.new)
+                   event_store: AgentLoop::EventStores::InMemory.new,
+                   signal_queue: AgentLoop::SignalQueues::InMemory.new)
       @router = router
       @effect_executor = effect_executor
       @state_store = state_store
       @state_op_applicator = state_op_applicator
       @strategy = strategy
       @event_store = event_store
+      @signal_queue = signal_queue
     end
 
     def call(instance, signal, context: {})
@@ -23,8 +25,9 @@ module AgentLoop
         agent = instance.agent_class.new
 
         current_state = instance.state || state_store.load(instance.id) || agent.initial_state
+        track_signal_context(instance, signal, context)
         record_event(instance.id, type: "signal.received", signal: serialize_signal(signal), context: context)
-        instruction = router.instruction_for(instance.agent_class, signal)
+        instruction = router.instruction_for(instance.agent_class, signal, strategy: strategy, context: context)
 
         result = AgentLoop::Notifications.instrument_lifecycle("agent_loop.cmd",
                                                                payload.merge(action: instruction.action)) do
@@ -66,6 +69,17 @@ module AgentLoop
                                                    context: { instance_id: instance.id, signal_type: signal.type })
     end
 
+    def cast(instance, signal, context: {})
+      signal_queue.enqueue(instance: instance, signal: signal, context: context)
+      :ok
+    end
+
+    def drain(limit: nil)
+      signal_queue.drain(runtime: self, limit: limit) do |entry|
+        call(entry.fetch(:instance), entry.fetch(:signal), context: entry.fetch(:context, {}))
+      end
+    end
+
     private
 
     def record_event(instance_id, event)
@@ -76,14 +90,24 @@ module AgentLoop
 
     def serialize_signal(signal)
       {
+        specversion: signal.specversion,
         id: signal.id,
         type: signal.type,
         source: signal.source,
         subject: signal.subject,
         time: signal.time,
+        datacontenttype: signal.datacontenttype,
+        dataschema: signal.dataschema,
         metadata: signal.metadata,
         data: signal.data
       }
+    end
+
+    def track_signal_context(instance, signal, context)
+      instance.metadata[:last_signal_id] = signal.id
+      instance.metadata[:trace_id] = context[:trace_id] || signal.metadata[:trace_id]
+      instance.metadata[:correlation_id] = context[:correlation_id] || signal.metadata[:correlation_id]
+      instance.metadata[:causation_id] = context[:causation_id] || signal.metadata[:causation_id]
     end
 
     def notification_payload(instance, signal, context)

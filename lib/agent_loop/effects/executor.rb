@@ -28,7 +28,14 @@ module AgentLoop
         AgentLoop::Notifications.instrument_lifecycle("agent_loop.effect", payload) do
           case effect
           when AgentLoop::Effects::Emit
-            signal = AgentLoop::Signal.new(type: effect.type, data: effect.data, source: "agent://#{instance.id}")
+            signal = effect.to_signal(
+              default_source: "agent://#{instance.id}",
+              default_metadata: {
+                trace_id: instance.metadata[:trace_id],
+                correlation_id: instance.metadata[:correlation_id],
+                causation_id: instance.metadata[:last_signal_id]
+              }
+            )
             @emit_adapter.emit(signal, target: effect.target)
           when AgentLoop::Effects::Schedule
             @scheduler_adapter.schedule(delay_ms: effect.delay_ms) do

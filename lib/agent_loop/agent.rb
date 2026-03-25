@@ -95,12 +95,40 @@ module AgentLoop
         ]
       end
 
-      def route(signal_type, to:)
-        routes[signal_type] = to
+      def route(signal_type, to:, priority: 0)
+        routes[signal_type] = { target: to, priority: priority }
       end
 
       def routes
         @routes ||= {}
+      end
+
+      def plugin_signal_route(signal_type, to:, priority: -10)
+        plugin_routes[signal_type] = { target: to, priority: priority }
+      end
+
+      def plugin_routes
+        @plugin_routes ||= {}
+      end
+
+      def signal_routes(_context = {})
+        routes.map do |pattern, target_spec|
+          if target_spec.is_a?(Hash) && target_spec.key?(:target)
+            [pattern, target_spec.fetch(:target), target_spec.fetch(:priority, 0)]
+          else
+            [pattern, target_spec, 0]
+          end
+        end
+      end
+
+      def plugin_signal_routes(_context = {})
+        plugin_routes.map do |pattern, target_spec|
+          if target_spec.is_a?(Hash) && target_spec.key?(:target)
+            [pattern, target_spec.fetch(:target), target_spec.fetch(:priority, -10)]
+          else
+            [pattern, target_spec, -10]
+          end
+        end
       end
 
       private

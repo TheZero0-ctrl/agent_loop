@@ -33,6 +33,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   spec.add_dependency "dry-schema", "~> 1.14"
+  spec.add_dependency "uuid7", "~> 0.2"
   spec.add_dependency "zeitwerk", "~> 2.7"
 
   # For more information and examples about making a new gem, check out our
