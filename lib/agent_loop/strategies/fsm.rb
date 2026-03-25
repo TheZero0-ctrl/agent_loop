@@ -17,7 +17,8 @@ module AgentLoop
         allowed_actions = Array(@transitions.fetch(step, []))
 
         unless allowed_actions.include?(instruction.action)
-          raise InvalidTransition, "Action #{instruction.action} not allowed from step #{step}"
+          raise InvalidTransition,
+                "Action #{instruction.action} not allowed from step #{step}"
         end
 
         result = agent.cmd(state, instruction, context: context)
@@ -43,7 +44,7 @@ module AgentLoop
       end
 
       def infer_next_step(current_step, action)
-        action_step = action.to_s.sub(/^on_/, "").to_sym
+        action_step = action.to_s.sub(/^on_/, '').to_sym
         return action_step if @transitions.key?(action_step)
 
         current_step

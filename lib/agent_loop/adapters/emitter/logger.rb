@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
-require "json"
-require "logger"
+require 'json'
+require 'logger'
 
 module AgentLoop
   module Adapters

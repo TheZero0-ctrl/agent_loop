@@ -21,15 +21,15 @@ module AgentLoop
     def call(instance, signal, context: {})
       payload = notification_payload(instance, signal, context)
 
-      AgentLoop::Notifications.instrument_lifecycle("agent_loop.signal", payload) do
+      AgentLoop::Notifications.instrument_lifecycle('agent_loop.signal', payload) do
         agent = instance.agent_class.new
 
         current_state = instance.state || state_store.load(instance.id) || agent.initial_state
         track_signal_context(instance, signal, context)
-        record_event(instance.id, type: "signal.received", signal: serialize_signal(signal), context: context)
+        record_event(instance.id, type: 'signal.received', signal: serialize_signal(signal), context: context)
         instruction = router.instruction_for(instance.agent_class, signal, strategy: strategy, context: context)
 
-        result = AgentLoop::Notifications.instrument_lifecycle("agent_loop.cmd",
+        result = AgentLoop::Notifications.instrument_lifecycle('agent_loop.cmd',
                                                                payload.merge(action: instruction.action)) do
           strategy.cmd(
             agent: agent,
@@ -47,7 +47,7 @@ module AgentLoop
         state_store.save(instance.id, final_state)
         record_event(
           instance.id,
-          type: "cmd.applied",
+          type: 'cmd.applied',
           action: instruction.action,
           state_version: instance.metadata[:state_version],
           status: result.status,

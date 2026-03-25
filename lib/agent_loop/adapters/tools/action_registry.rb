@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../tool"
+require_relative '../tool'
 
 module AgentLoop
   module Adapters
@@ -10,8 +10,8 @@ module AgentLoop
         class ToolActionEffectsNotSupported < StandardError; end
 
         def initialize(actions:)
-          @actions = Array(actions).each_with_object({}) do |action, memo|
-            memo[action.name.to_s] = action
+          @actions = Array(actions).to_h do |action|
+            [action.name.to_s, action]
           end
         end
 
@@ -35,8 +35,9 @@ module AgentLoop
           )
 
           if result.effects.any?
+            effect_names = result.effects.map(&:class).join(', ')
             raise ToolActionEffectsNotSupported,
-                  "Tool-backed actions must return state output only. Got effects: #{result.effects.map(&:class).join(", ")}"
+                  "Tool-backed actions must return state output only. Got effects: #{effect_names}"
           end
 
           output_patch = deep_diff(previous_state, result.state)

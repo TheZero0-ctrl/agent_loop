@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "dry/schema"
+require 'dry/schema'
 
 module AgentLoop
   module Agent
@@ -162,7 +162,7 @@ module AgentLoop
         result = @state_schema.call(input)
         return deep_merge(input, result.to_h) if result.success?
 
-        raise AgentLoop::Agent::InvalidState.new("State schema validation failed", details: result.errors.to_h)
+        raise AgentLoop::Agent::InvalidState.new('State schema validation failed', details: result.errors.to_h)
       end
 
       def deep_dup(obj)

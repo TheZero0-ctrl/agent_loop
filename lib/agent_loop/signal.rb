@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require "time"
-require "uuid7"
+require 'time'
+require 'uuid7'
 
 module AgentLoop
   class Signal
-    SPECVERSION = "1.0.2"
-    JSON_CONTENT_TYPE = "application/json"
+    SPECVERSION = '1.0.2'
+    JSON_CONTENT_TYPE = 'application/json'
 
     attr_reader :specversion, :id, :type, :source, :subject, :time,
                 :datacontenttype, :dataschema, :data, :metadata
@@ -112,9 +112,9 @@ module AgentLoop
     end
 
     def validate!
-      raise ArgumentError, "Signal type is required" if type.empty?
-      raise ArgumentError, "Signal source is required" if source.empty?
-      raise ArgumentError, "Signal specversion is required" if specversion.empty?
+      raise ArgumentError, 'Signal type is required' if type.empty?
+      raise ArgumentError, 'Signal source is required' if source.empty?
+      raise ArgumentError, 'Signal specversion is required' if specversion.empty?
     end
   end
 end

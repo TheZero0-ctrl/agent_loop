@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../tool"
+require_relative '../tool'
 
 module AgentLoop
   module Adapters

@@ -18,7 +18,7 @@ module AgentLoop
         when AgentLoop::StateOps::ReplaceState
           deep_dup(state_op.state)
         when AgentLoop::StateOps::DeleteKeys
-          state.reject { |key, _value| state_op.keys.include?(key) }
+          state.except(*state_op.keys)
         when AgentLoop::StateOps::SetPath
           set_path(state, state_op.path, state_op.value)
         when AgentLoop::StateOps::DeletePath

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../state_store"
+require_relative '../state_store'
 
 module AgentLoop
   module StateStores

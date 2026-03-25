@@ -4,10 +4,10 @@ module AgentLoop
   module Adapters
     module Scheduler
       class Inline
-        def schedule(delay_ms:, &block)
+        def schedule(delay_ms:)
           Thread.new do
             sleep(delay_ms.to_f / 1000.0)
-            block.call
+            yield
           end
 
           :ok

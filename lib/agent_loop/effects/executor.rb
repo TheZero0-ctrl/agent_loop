@@ -25,7 +25,7 @@ module AgentLoop
           effect_type: effect.class.name
         }
 
-        AgentLoop::Notifications.instrument_lifecycle("agent_loop.effect", payload) do
+        AgentLoop::Notifications.instrument_lifecycle('agent_loop.effect', payload) do
           case effect
           when AgentLoop::Effects::Emit
             signal = effect.to_signal(
@@ -62,7 +62,7 @@ module AgentLoop
               metadata: { parent_id: instance.id }
             )
             instance.children[effect.id] = child
-            emit_child_signal("agent_loop.child.started", instance: instance, child: child)
+            emit_child_signal('agent_loop.child.started', instance: instance, child: child)
             :ok
           when AgentLoop::Effects::RunTool
             run_tool_effect(effect, instance: instance, runtime: runtime)
@@ -95,12 +95,12 @@ module AgentLoop
         }.compact
 
         payload = {
-          "result" => output,
-          "tool_call_id" => meta[:tool_call_id],
-          "tool_name" => tool_name,
-          "action_class" => meta[:action_class],
-          "action_ref" => meta[:action_ref],
-          "requested_at" => meta[:requested_at]
+          'result' => output,
+          'tool_call_id' => meta[:tool_call_id],
+          'tool_name' => tool_name,
+          'action_class' => meta[:action_class],
+          'action_ref' => meta[:action_ref],
+          'requested_at' => meta[:requested_at]
         }.compact
 
         case callback_event

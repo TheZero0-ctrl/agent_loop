@@ -23,7 +23,7 @@ module AgentLoop
 
         return if @signal
 
-        raise ArgumentError, "Emit requires signal or type" if @type.nil?
+        raise ArgumentError, 'Emit requires signal or type' if @type.nil?
       end
 
       def to_signal(default_source:, default_metadata: {})

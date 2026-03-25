@@ -38,7 +38,7 @@ module AgentLoop
           [adapter(entry[0], options), { target: target }]
         elsif entry.is_a?(Hash)
           type = entry.fetch(:adapter)
-          options = entry.reject { |key, _| key == :adapter }.dup
+          options = entry.except(:adapter).dup
           target = options.delete(:target)
           [adapter(type, options), { target: target }]
         else

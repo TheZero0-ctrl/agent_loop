@@ -39,7 +39,7 @@ module AgentLoop
         end
 
         {
-          type: "object",
+          type: 'object',
           properties: properties,
           required: required,
           additionalProperties: !strict,
@@ -48,7 +48,7 @@ module AgentLoop
       end
 
       def schema_from_ast(ast, defaults:, descriptions:, strict:)
-        return { type: "string" } unless ast.is_a?(Array)
+        return { type: 'string' } unless ast.is_a?(Array)
 
         case ast[0]
         when :and
@@ -60,9 +60,9 @@ module AgentLoop
         when :set
           object_schema_from_set(ast, defaults: defaults || {}, descriptions: descriptions || {}, strict: strict)
         when :each
-          { type: "array", items: schema_from_ast(ast[1], defaults: nil, descriptions: nil, strict: strict) }
+          { type: 'array', items: schema_from_ast(ast[1], defaults: nil, descriptions: nil, strict: strict) }
         else
-          { type: "string" }
+          { type: 'string' }
         end.then { |schema| apply_recursive_strict(schema, strict: strict) }
       end
 
@@ -98,7 +98,7 @@ module AgentLoop
         end
 
         merge_schema!(schema, each_schema) if each_schema
-        schema = { type: "string" } if schema.empty?
+        schema = { type: 'string' } if schema.empty?
         apply_recursive_strict(schema, strict: strict)
       end
 
@@ -113,8 +113,11 @@ module AgentLoop
       end
 
       def nil_guard?(node)
-        node.is_a?(Array) && node[0] == :not && node[1].is_a?(Array) && node[1][0] == :predicate && node[1].dig(1,
-                                                                                                                0) == :nil?
+        node.is_a?(Array) &&
+          node[0] == :not &&
+          node[1].is_a?(Array) &&
+          node[1][0] == :predicate &&
+          node[1].dig(1, 0) == :nil?
       end
 
       def add_nullable(schema)
@@ -123,7 +126,7 @@ module AgentLoop
         return schema unless existing_type
 
         schema[:type] = Array(existing_type).map(&:to_s)
-        schema[:type] << "null"
+        schema[:type] << 'null'
         schema[:type].uniq!
         schema
       end
@@ -133,17 +136,17 @@ module AgentLoop
 
         case name
         when :int?
-          { type: "integer" }
+          { type: 'integer' }
         when :float?, :decimal?, :number?
-          { type: "number" }
+          { type: 'number' }
         when :bool?
-          { type: "boolean" }
+          { type: 'boolean' }
         when :array?
-          { type: "array", items: { type: "string" } }
+          { type: 'array', items: { type: 'string' } }
         when :hash?
-          { type: "object", properties: {}, required: [], additionalProperties: true }
+          { type: 'object', properties: {}, required: [], additionalProperties: true }
         when :str?
-          { type: "string" }
+          { type: 'string' }
         when :included_in?
           { enum: extract_enum_values(args) }
         else
@@ -197,11 +200,12 @@ module AgentLoop
         return left unless right.is_a?(Hash)
 
         right.each do |key, value|
-          if key == :required
+          case key
+          when :required
             left[:required] = Array(left[:required]) | Array(value)
-          elsif key == :properties
+          when :properties
             left[:properties] = (left[:properties] || {}).merge(value)
-          elsif key == :enum
+          when :enum
             left[:enum] = Array(value)
           else
             left[key] = deep_dup(value)
@@ -217,7 +221,7 @@ module AgentLoop
         type = schema[:type]
         types = Array(type).map(&:to_s)
 
-        if types.include?("object")
+        if types.include?('object')
           schema[:properties] ||= {}
           schema[:required] ||= []
           schema[:additionalProperties] = !strict unless schema.key?(:additionalProperties)
@@ -227,8 +231,10 @@ module AgentLoop
           end
         end
 
-        if types.include?("array") && schema[:items].is_a?(Hash)
-          schema[:items] = apply_recursive_strict(schema[:items], strict: strict)
+        if types.include?('array') && schema[:items].is_a?(Hash)
+          schema[:items] =
+            apply_recursive_strict(schema[:items],
+                                   strict: strict)
         end
 
         schema

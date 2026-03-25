@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "dry/schema"
+require 'dry/schema'
 
 module AgentLoop
   class Action
@@ -117,7 +117,7 @@ module AgentLoop
         result = @params_schema.call(input)
         return deep_merge(input, result.to_h) if result.success?
 
-        raise InvalidParams.new("Action params validation failed", details: result.errors.to_h)
+        raise InvalidParams.new('Action params validation failed', details: result.errors.to_h)
       end
 
       def validate_output!(output)
@@ -128,7 +128,7 @@ module AgentLoop
         result = @output_schema.call(input)
         return deep_merge(input, result.to_h) if result.success?
 
-        raise InvalidOutput.new("Action output validation failed", details: result.errors.to_h)
+        raise InvalidOutput.new('Action output validation failed', details: result.errors.to_h)
       end
 
       def normalize_output(previous_state, output)

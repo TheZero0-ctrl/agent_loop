@@ -1,13 +1,13 @@
 # frozen_string_literal: true
 
-require "test_helper"
+require 'test_helper'
 
 class JidoStyleActionsTest < Minitest::Test
   class CounterAgent
     include AgentLoop::Agent
 
-    name "counter_agent"
-    description "Tracks a simple counter"
+    name 'counter_agent'
+    description 'Tracks a simple counter'
 
     schema defaults: { count: 0 } do
       required(:count).filled(:integer)
@@ -26,8 +26,8 @@ class JidoStyleActionsTest < Minitest::Test
     def self.run(params, context)
       current = context.fetch(:state).fetch(:count)
       [
-        { count: current + params.fetch(:by), passthrough: "ok" },
-        [AgentLoop::Effects::Emit.new(type: "counter.updated")]
+        { count: current + params.fetch(:by), passthrough: 'ok' },
+        [AgentLoop::Effects::Emit.new(type: 'counter.updated')]
       ]
     end
   end
@@ -38,7 +38,7 @@ class JidoStyleActionsTest < Minitest::Test
     end
 
     def self.run(_params, _context)
-      { count: "not_an_integer" }
+      { count: 'not_an_integer' }
     end
   end
 
@@ -80,7 +80,7 @@ class JidoStyleActionsTest < Minitest::Test
   def test_cmd_updates_agent_and_returns_directives
     agent = CounterAgent.new
 
-    updated_agent, directives = CounterAgent.cmd(agent, [IncrementAction, { "by" => 3 }])
+    updated_agent, directives = CounterAgent.cmd(agent, [IncrementAction, { 'by' => 3 }])
 
     assert_equal({ count: 0 }, agent.state)
     assert_equal 3, updated_agent.state[:count]
@@ -91,7 +91,7 @@ class JidoStyleActionsTest < Minitest::Test
   def test_cmd_returns_error_directive_for_invalid_action_params
     agent = CounterAgent.new
 
-    same_agent, directives = CounterAgent.cmd(agent, [IncrementAction, { by: "bad" }])
+    same_agent, directives = CounterAgent.cmd(agent, [IncrementAction, { by: 'bad' }])
 
     assert_equal({ count: 0 }, same_agent.state)
     assert_equal 1, directives.size
@@ -114,13 +114,13 @@ class JidoStyleActionsTest < Minitest::Test
     agent = CounterAgent.new
 
     updated_agent, directives = CounterAgent.cmd(agent, [
-                                                   [ValidateOrder, { order_id: "ord_99" }],
+                                                   [ValidateOrder, { order_id: 'ord_99' }],
                                                    ApplyDiscount
                                                  ])
 
-    assert_equal "ord_99", updated_agent.state[:order_id]
-    assert_equal true, updated_agent.state[:validated]
-    assert_equal 0.10, updated_agent.state[:discount]
+    assert_equal 'ord_99', updated_agent.state[:order_id]
+    assert updated_agent.state[:validated]
+    assert_in_delta(0.10, updated_agent.state[:discount])
     assert_equal [], directives
   end
 
@@ -129,15 +129,15 @@ class JidoStyleActionsTest < Minitest::Test
 
     instruction = AgentLoop::Instruction.new!(
       action: ProcessOrder,
-      params: { order_id: "ord_99" },
-      context: { tenant_id: "tenant_456" },
+      params: { order_id: 'ord_99' },
+      context: { tenant_id: 'tenant_456' },
       opts: [{ timeout: 10_000 }]
     )
 
     updated_agent, directives = CounterAgent.cmd(agent, instruction)
 
-    assert_equal "ord_99", updated_agent.state[:order_id]
-    assert_equal "tenant_456", updated_agent.state[:tenant_id]
+    assert_equal 'ord_99', updated_agent.state[:order_id]
+    assert_equal 'tenant_456', updated_agent.state[:tenant_id]
     assert_equal 10_000, updated_agent.state[:timeout]
     assert_equal [], directives
   end

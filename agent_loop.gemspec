@@ -1,22 +1,23 @@
 # frozen_string_literal: true
 
-require_relative "lib/agent_loop/version"
+require_relative 'lib/agent_loop/version'
 
 Gem::Specification.new do |spec|
-  spec.name = "agent_loop"
+  spec.name = 'agent_loop'
   spec.version = AgentLoop::VERSION
-  spec.authors = ["TheZero0-ctrl"]
-  spec.email = ["ankitpariyar.dev@gmail.com"]
+  spec.authors = ['TheZero0-ctrl']
+  spec.email = ['ankitpariyar.dev@gmail.com']
 
-  spec.summary = "Deterministic agent loop with explicit effects"
+  spec.summary = 'Deterministic agent loop with explicit effects'
   # spec.description = "TODO: Write a longer description or delete this line."
-  spec.homepage = "https://github.com/TheZero0-ctrl/agent_loop"
-  spec.license = "MIT"
-  spec.required_ruby_version = ">= 3.2.0"
+  spec.homepage = 'https://github.com/TheZero0-ctrl/agent_loop'
+  spec.license = 'MIT'
+  spec.required_ruby_version = '>= 3.2.0'
 
   # spec.metadata["allowed_push_host"] = "TODO: Set to your gem server 'https://example.com'"
-  spec.metadata["homepage_uri"] = spec.homepage
-  spec.metadata["source_code_uri"] = "https://github.com/TheZero0-ctrl/agent_loop"
+  spec.metadata['homepage_uri'] = spec.homepage
+  spec.metadata['source_code_uri'] = 'https://github.com/TheZero0-ctrl/agent_loop'
+  spec.metadata['rubygems_mfa_required'] = 'true'
   # spec.metadata["changelog_uri"] = "TODO: Put your gem's CHANGELOG.md URL here."
 
   # Specify which files should be added to the gem when it is released.
@@ -28,13 +29,13 @@ Gem::Specification.new do |spec|
         f.start_with?(*%w[bin/ Gemfile .gitignore test/ .github/ .rubocop.yml])
     end
   end
-  spec.bindir = "exe"
+  spec.bindir = 'exe'
   spec.executables = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
-  spec.require_paths = ["lib"]
+  spec.require_paths = ['lib']
 
-  spec.add_dependency "dry-schema", "~> 1.14"
-  spec.add_dependency "uuid7", "~> 0.2"
-  spec.add_dependency "zeitwerk", "~> 2.7"
+  spec.add_dependency 'dry-schema', '~> 1.14'
+  spec.add_dependency 'uuid7', '~> 0.2'
+  spec.add_dependency 'zeitwerk', '~> 2.7'
 
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html

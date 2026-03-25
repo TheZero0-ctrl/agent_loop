@@ -10,11 +10,11 @@ module AgentLoop
           ensure_rubyllm_tool!
 
           Array(actions).map do |action_class|
-            build_rubyllm_tool(action_class, strict: strict_for(action_class, strict))
+            build_rubyllm_tool(action_class, strict: strict_mode?(action_class, strict))
           end
         end
 
-        def with_runtime(instance_id:, sink: default_sink, callback_event: "tool.completed", context: {},
+        def with_runtime(instance_id:, sink: default_sink, callback_event: 'tool.completed', context: {},
                          context_provider: nil)
           previous = current_runtime
           configure_runtime(
@@ -26,12 +26,12 @@ module AgentLoop
           )
           yield
         ensure
-          set_current_runtime(previous)
+          write_current_runtime(previous)
         end
 
-        def configure_runtime(instance_id:, sink: default_sink, callback_event: "tool.completed", context: {},
+        def configure_runtime(instance_id:, sink: default_sink, callback_event: 'tool.completed', context: {},
                               context_provider: nil)
-          set_current_runtime(
+          write_current_runtime(
             instance_id: instance_id,
             sink: sink,
             callback_event: callback_event,
@@ -41,7 +41,7 @@ module AgentLoop
         end
 
         def clear_runtime!
-          set_current_runtime(nil)
+          write_current_runtime(nil)
         end
 
         def current_runtime
@@ -80,8 +80,8 @@ module AgentLoop
               queued: false,
               tool: tool_name,
               action_ref: action_ref,
-              error: "no_runtime_context",
-              note: "Configure AgentLoop::AI::ToolAdapter runtime before chat.ask"
+              error: 'no_runtime_context',
+              note: 'Configure AgentLoop::AI::ToolAdapter runtime before chat.ask'
             }
           end
 
@@ -109,7 +109,7 @@ module AgentLoop
             action_ref: request.action_ref,
             instance_id: request.instance_id,
             callback_event: request.callback_event,
-            note: "Tool execution deferred to AgentLoop runtime"
+            note: 'Tool execution deferred to AgentLoop runtime'
           }
         end
 
@@ -141,7 +141,7 @@ module AgentLoop
           klass.new
         end
 
-        def strict_for(action_class, strict)
+        def strict_mode?(action_class, strict)
           return action_class.strict? if strict.nil?
 
           strict == true
@@ -150,14 +150,14 @@ module AgentLoop
         def ensure_rubyllm_tool!
           return if defined?(::RubyLLM::Tool)
 
-          raise RubyLLMMissing, "RubyLLM::Tool is not available. Add the ruby_llm gem to use ToolAdapter."
+          raise RubyLLMMissing, 'RubyLLM::Tool is not available. Add the ruby_llm gem to use ToolAdapter.'
         end
 
         def default_sink
           @default_sink ||= InMemoryToolExecSink.new
         end
 
-        def set_current_runtime(runtime)
+        def write_current_runtime(runtime)
           Thread.current[:agent_loop_tool_runtime] = runtime
         end
       end

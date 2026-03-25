@@ -3,7 +3,7 @@
 module AgentLoop
   class Router
     class RouteNotFound < StandardError; end
-    Route = Struct.new(:pattern, :target, :priority, :source, :index, keyword_init: true)
+    Route = Struct.new(:pattern, :target, :priority, :source, :index)
 
     STRATEGY_PRIORITY = 50
     AGENT_PRIORITY = 0
@@ -61,7 +61,7 @@ module AgentLoop
         pattern, target, priority = normalize_route_spec(spec, default_priority)
         next if pattern.nil? || target.nil?
 
-        all << Route.new(pattern: pattern, target: target, priority: priority, source: source, index: yield)
+        all << Route.new(pattern, target, priority, source, yield)
       end
     end
 
@@ -126,16 +126,16 @@ module AgentLoop
     end
 
     def specificity(pattern)
-      parts = pattern.to_s.split(".")
-      exact = parts.count { |part| part != "*" && part != "**" }
-      single_wildcards = parts.count("*")
-      multi_wildcards = parts.count("**")
+      parts = pattern.to_s.split('.')
+      exact = parts.count { |part| part != '*' && part != '**' }
+      single_wildcards = parts.count('*')
+      multi_wildcards = parts.count('**')
       [exact, single_wildcards, multi_wildcards, parts.length]
     end
 
     def match_pattern?(pattern, type)
-      pattern_parts = pattern.to_s.split(".")
-      type_parts = type.to_s.split(".")
+      pattern_parts = pattern.to_s.split('.')
+      type_parts = type.to_s.split('.')
       pattern_match?(pattern_parts, type_parts)
     end
 
@@ -145,7 +145,7 @@ module AgentLoop
 
       head = pattern_parts.first
 
-      if head == "**"
+      if head == '**'
         return true if pattern_parts.length == 1
 
         (0..type_parts.length).any? do |offset|
@@ -154,7 +154,7 @@ module AgentLoop
       end
 
       return false if type_parts.empty?
-      return pattern_match?(pattern_parts[1..], type_parts[1..]) if head == "*" || head == type_parts.first
+      return pattern_match?(pattern_parts[1..], type_parts[1..]) if head == '*' || head == type_parts.first
 
       false
     end

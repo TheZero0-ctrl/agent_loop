@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require_relative "../signal_queue"
+require_relative '../signal_queue'
 
 module AgentLoop
   module SignalQueues
@@ -14,6 +14,7 @@ module AgentLoop
       end
 
       def drain(runtime:, limit: nil)
+        _runtime = runtime
         processed = 0
 
         until @queue.empty?
