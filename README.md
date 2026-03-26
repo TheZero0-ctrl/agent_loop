@@ -7,6 +7,16 @@ It is inspired by [Jido](https://github.com/agentjido/jido), with a similar focu
 - data-first agents
 - explicit command boundaries
 - clear separation between state transitions and side effects
+- mailbox-backed `AgentServer` runtime hosts
+- delayed signals that replay back through runtime
+
+The core model is:
+
+- `AgentLoop::Agent` decides through `cmd`
+- `AgentLoop::AgentServer` owns one live instance and processes signals serially
+- `AgentLoop::Runtime` acts as the shared execution kernel
+- `Effects::Schedule` uses your job backend for delayed replay
+- `Effects::Spawn` starts real child servers
 
 This project is still evolving and APIs may change.
 

@@ -6,10 +6,12 @@ module AgentLoop
       class UnsupportedEffect < StandardError; end
 
       def initialize(emit_adapter:, scheduled_signal_job_class: nil,
-                     tool_adapter: AgentLoop::Adapters::Tools::Null.new)
+                     tool_adapter: AgentLoop::Adapters::Tools::Null.new,
+                     server_manager: AgentLoop::ServerManager.new)
         @emit_adapter = emit_adapter
         @scheduled_signal_job_class = scheduled_signal_job_class
         @tool_adapter = tool_adapter
+        @server_manager = server_manager
       end
 
       def execute_all(effects, instance:, runtime:)
@@ -57,10 +59,23 @@ module AgentLoop
               id: effect.id,
               state: effect.initial_state,
               status: :idle,
-              metadata: { parent_id: instance.id }
+              metadata: {
+                parent_id: instance.id,
+                parent_tag: effect.tag,
+                on_parent_death: effect.on_parent_death
+              }
             )
-            instance.children[effect.id] = child
-            emit_child_signal('agent_loop.child.started', instance: instance, child: child)
+            child_server = @server_manager.start(runtime: runtime, instance: child)
+            instance.children[effect.tag] = {
+              id: child.id,
+              server: child_server,
+              on_parent_death: effect.on_parent_death,
+              status: :started
+            }
+            emit_child_signal('agent_loop.child.started', instance: instance, child: child, tag: effect.tag)
+            notify_live_parent(instance.id,
+                               child_signal('agent_loop.child.started', instance: instance, child: child,
+                                                                        tag: effect.tag))
             :ok
           when AgentLoop::Effects::RunTool
             run_tool_effect(effect, instance: instance, runtime: runtime)
@@ -139,18 +154,31 @@ module AgentLoop
         end
       end
 
-      def emit_child_signal(type, instance:, child:)
-        signal = AgentLoop::Signal.new(
+      def emit_child_signal(type, instance:, child:, tag:)
+        signal = child_signal(type, instance: instance, child: child, tag: tag)
+
+        @emit_adapter.emit(signal, target: instance.id)
+      end
+
+      def child_signal(type, instance:, child:, tag:)
+        AgentLoop::Signal.new(
           type: type,
           source: "agent://#{instance.id}",
           data: {
             parent_id: instance.id,
             child_id: child.id,
-            child_class: child.agent_class.to_s
+            child_class: child.agent_class.to_s,
+            tag: tag
           }
         )
+      end
 
-        @emit_adapter.emit(signal, target: instance.id)
+      def notify_live_parent(parent_id, signal)
+        parent_server = @server_manager.whereis(parent_id)
+        return unless parent_server
+        return unless parent_server.accepts_signal?(signal)
+
+        parent_server.cast(signal)
       end
     end
   end

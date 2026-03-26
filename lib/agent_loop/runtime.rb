@@ -22,6 +22,12 @@ module AgentLoop
     end
 
     def call(instance, signal, context: {})
+      result = process_signal(instance, signal, context: context)
+      effect_failures = execute_effects(result.effects, instance: instance, context: context)
+      finalize_result(result, effect_failures)
+    end
+
+    def process_signal(instance, signal, context: {})
       payload = notification_payload(instance, signal, context)
 
       AgentLoop::Notifications.instrument_lifecycle('agent_loop.signal', payload) do
@@ -54,7 +60,7 @@ module AgentLoop
                       end
 
         instance.state = final_state
-        instance.status = result.ok? ? :active : :failed
+        instance.status = derive_instance_status(result, final_state)
         increment_state_version(instance) if result.ok?
         state_store.save(instance.id, final_state)
         record_event(
@@ -66,22 +72,40 @@ module AgentLoop
           effects: result.effects.map { |effect| effect.class.name }
         )
 
-        enqueue_effects(result.effects, instance: instance, context: context)
-        effect_failures = drain_effects
-
-        final_status, final_error = finalize_runtime_outcome(result, effect_failures)
-
         Result.new(
           state: final_state,
           state_ops: result.state_ops,
           effects: result.effects,
-          status: final_status,
-          error: final_error
+          status: result.status,
+          error: result.error
         )
       end
     rescue AgentLoop::Router::RouteNotFound => e
       raise AgentLoop::RuntimeError.new(e.message, code: :route_not_found,
                                                    context: { instance_id: instance.id, signal_type: signal.type })
+    end
+
+    def execute_effects(effects, instance:, context: {})
+      failures = []
+
+      Array(effects).each do |effect|
+        failure = execute_effect(effect, instance: instance, context: context)
+        failures << failure if failure
+      end
+
+      failures
+    end
+
+    def finalize_result(result, effect_failures)
+      final_status, final_error = finalize_runtime_outcome(result, effect_failures)
+
+      Result.new(
+        state: result.state,
+        state_ops: result.state_ops,
+        effects: result.effects,
+        status: final_status,
+        error: final_error
+      )
     end
 
     def cast(instance, signal, context: {})
@@ -164,22 +188,20 @@ module AgentLoop
       instance.metadata[:state_version] = instance.metadata.fetch(:state_version, 0) + 1
     end
 
-    def enqueue_effects(effects, instance:, context: {})
-      Array(effects).each do |effect|
-        effect_queue.enqueue(effect: effect, instance: instance, context: context)
-      end
+    def derive_instance_status(result, state)
+      return :failed unless result.ok?
+
+      state_lifecycle_status(state) || :active
     end
 
-    def drain_effects(limit: nil)
-      failures = []
+    def state_lifecycle_status(state)
+      return unless state.is_a?(Hash)
 
-      effect_queue.drain(runtime: self, limit: limit) do |entry|
-        failure = execute_effect(entry.fetch(:effect), instance: entry.fetch(:instance),
-                                                       context: entry.fetch(:context, {}))
-        failures << failure if failure
-      end
+      raw = state[:status] || state['status']
+      status = raw&.to_sym
+      return status if %i[completed failed stopped].include?(status)
 
-      failures
+      nil
     end
 
     def execute_effect(effect, instance:, context: {})
