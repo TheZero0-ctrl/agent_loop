@@ -24,6 +24,18 @@ class RuntimeSignalFlowTest < Minitest::Test
     route 'counter.increment', to: IncrementAction
   end
 
+  class MethodCounterAgent
+    include AgentLoop::Agent
+
+    default_state({ count: 0 })
+    route 'counter.increment', to: :increment
+
+    def increment(params, state:, context:)
+      _context = context
+      { count: state.fetch(:count, 0) + params.fetch(:by, 1) }
+    end
+  end
+
   def build_runtime
     emit_adapter = AgentLoop::Adapters::Emitter::InProcess.new
     effect_executor = AgentLoop::Effects::Executor.new(emit_adapter: emit_adapter)
@@ -59,5 +71,17 @@ class RuntimeSignalFlowTest < Minitest::Test
     assert_equal 'trace-123', emitted.metadata[:trace_id]
     assert_equal 'corr-123', emitted.metadata[:correlation_id]
     assert_equal signal.id, emitted.metadata[:causation_id]
+  end
+
+  def test_method_routes_receive_symbolized_params
+    runtime, _emit_adapter = build_runtime
+    instance = AgentLoop::Instance.new(agent_class: MethodCounterAgent, id: 'counter-method')
+    signal = AgentLoop::Signal.new(type: 'counter.increment', source: 'test', data: { 'by' => 2 })
+
+    result = runtime.call(instance, signal)
+
+    assert_equal :ok, result.status
+    assert_equal 2, result.state[:count]
+    assert_equal 2, instance.state[:count]
   end
 end

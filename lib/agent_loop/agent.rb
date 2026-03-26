@@ -53,7 +53,8 @@ module AgentLoop
       def initial_state
         base_state = deep_dup(default_state)
         schema_input = deep_merge(base_state, deep_dup(schema_defaults))
-        validate_state!(schema_input)
+        with_plugins = mount_plugins(schema_input)
+        validate_state!(with_plugins)
       end
 
       def cmd(agent, instruction, context: {})
@@ -111,6 +112,14 @@ module AgentLoop
         @plugin_routes ||= {}
       end
 
+      def plugin(plugin_module, state_key: nil)
+        plugins << { module: plugin_module, state_key: state_key }
+      end
+
+      def plugins
+        @plugins ||= []
+      end
+
       def signal_routes(_context = {})
         routes.map do |pattern, target_spec|
           if target_spec.is_a?(Hash) && target_spec.key?(:target)
@@ -122,16 +131,95 @@ module AgentLoop
       end
 
       def plugin_signal_routes(_context = {})
-        plugin_routes.map do |pattern, target_spec|
+        static_routes = plugin_routes.map do |pattern, target_spec|
           if target_spec.is_a?(Hash) && target_spec.key?(:target)
             [pattern, target_spec.fetch(:target), target_spec.fetch(:priority, -10)]
           else
             [pattern, target_spec, -10]
           end
         end
+
+        dynamic_routes = plugins.flat_map do |plugin_entry|
+          plugin_module = plugin_entry.fetch(:module)
+          next [] unless plugin_module.respond_to?(:signal_routes)
+
+          route_context = { plugin: plugin_module, state_key: plugin_entry[:state_key] }
+          invoke_route_provider(plugin_module, route_context)
+        end
+
+        static_routes + dynamic_routes
+      end
+
+      def transform_result_with_plugins(result, instruction:, context: {})
+        plugins.reduce(result) do |current, plugin_entry|
+          plugin_module = plugin_entry.fetch(:module)
+          next current unless plugin_module.respond_to?(:transform_result)
+
+          plugin_context = context.merge(plugin: plugin_module, state_key: plugin_entry[:state_key])
+          transformed = invoke_plugin_hook(plugin_module, :transform_result,
+                                           result: current,
+                                           instruction: instruction,
+                                           context: plugin_context)
+          transformed.is_a?(AgentLoop::Result) ? transformed : current
+        end
+      end
+
+      def handle_signal_with_plugins(signal, context: {})
+        plugins.reduce(signal) do |current_signal, plugin_entry|
+          plugin_module = plugin_entry.fetch(:module)
+          next current_signal unless plugin_module.respond_to?(:handle_signal)
+
+          plugin_context = context.merge(plugin: plugin_module, state_key: plugin_entry[:state_key])
+          transformed = invoke_plugin_hook(plugin_module, :handle_signal,
+                                           signal: current_signal,
+                                           context: plugin_context)
+          transformed.is_a?(AgentLoop::Signal) ? transformed : current_signal
+        end
+      end
+
+      def on_before_cmd(agent:, instruction:, context:)
+        _agent = agent
+        [instruction, context]
+      end
+
+      def on_after_cmd(agent:, instruction:, result:, context:)
+        _agent = agent
+        _instruction = instruction
+        _context = context
+        result
+      end
+
+      def on_cmd_error(agent:, instruction:, error:, context:)
+        _agent = agent
+        _instruction = instruction
+        _context = context
+        raise error
       end
 
       private
+
+      def mount_plugins(state)
+        plugins.reduce(deep_dup(state)) do |current_state, plugin_entry|
+          plugin_module = plugin_entry.fetch(:module)
+          state_key = plugin_entry[:state_key]
+
+          mounted = if plugin_module.respond_to?(:mount)
+                      invoke_plugin_hook(plugin_module, :mount,
+                                         state: current_state,
+                                         agent_class: self,
+                                         state_key: state_key)
+                    else
+                      current_state
+                    end
+
+          next_state = mounted.is_a?(Hash) ? mounted : current_state
+          next next_state unless state_key
+
+          with_key = deep_dup(next_state)
+          with_key[state_key] = {} unless with_key.key?(state_key)
+          with_key
+        end
+      end
 
       def parse_instructions(instruction)
         AgentLoop::Instruction.normalize(instruction)
@@ -163,6 +251,28 @@ module AgentLoop
         return deep_merge(input, result.to_h) if result.success?
 
         raise AgentLoop::Agent::InvalidState.new('State schema validation failed', details: result.errors.to_h)
+      end
+
+      def invoke_route_provider(provider, context)
+        method = provider.method(:signal_routes)
+        if method.arity.zero?
+          method.call
+        else
+          method.call(context)
+        end
+      rescue ArgumentError
+        []
+      end
+
+      def invoke_plugin_hook(plugin_module, hook_name, payload)
+        method = plugin_module.method(hook_name)
+        if method.arity == 1
+          method.call(payload)
+        else
+          method.call(**payload)
+        end
+      rescue ArgumentError
+        method.call(payload)
       end
 
       def deep_dup(obj)
@@ -211,15 +321,30 @@ module AgentLoop
     end
 
     def cmd(state, instruction, context: {})
-      output = execute_instruction(state, instruction, context: context)
+      prepared_instruction, prepared_context = self.class.on_before_cmd(
+        agent: self,
+        instruction: instruction,
+        context: context
+      )
 
-      if output.is_a?(Result)
-        output
-      else
-        new_state, operations = output
-        state_ops, effects = partition_operations(operations)
-        Result.new(state: new_state, state_ops: state_ops, effects: effects)
-      end
+      output = execute_instruction(state, prepared_instruction, context: prepared_context)
+      result = normalize_cmd_output(output)
+
+      self.class.on_after_cmd(
+        agent: self,
+        instruction: prepared_instruction,
+        result: result,
+        context: prepared_context
+      )
+    rescue StandardError => e
+      handled = self.class.on_cmd_error(
+        agent: self,
+        instruction: instruction,
+        error: e,
+        context: context
+      )
+
+      handled.is_a?(Result) ? handled : raise(e)
     end
 
     private
@@ -230,7 +355,7 @@ module AgentLoop
       else
         raise NoMethodError, "Undefined action method: #{instruction.action}" unless respond_to?(instruction.action)
 
-        public_send(instruction.action, instruction.params, state: state, context: context)
+        public_send(instruction.action, normalize_method_params(instruction.params), state: state, context: context)
       end
     end
 
@@ -240,6 +365,37 @@ module AgentLoop
 
     def partition_operations(operations)
       Array(operations).partition { |operation| operation.is_a?(AgentLoop::StateOps::Base) }
+    end
+
+    def normalize_cmd_output(output)
+      return output if output.is_a?(Result)
+
+      new_state, operations = output
+      state_ops, effects = partition_operations(operations)
+      Result.new(state: new_state, state_ops: state_ops, effects: effects)
+    end
+
+    def normalize_method_params(params)
+      deep_indifferent_keys(params || {})
+    end
+
+    def deep_indifferent_keys(obj)
+      case obj
+      when Hash
+        obj.each_with_object({}) do |(key, value), memo|
+          normalized_value = deep_indifferent_keys(value)
+          memo[key] = normalized_value
+          if key.is_a?(String)
+            memo[key.to_sym] = normalized_value
+          elsif key.is_a?(Symbol)
+            memo[key.to_s] = normalized_value
+          end
+        end
+      when Array
+        obj.map { |value| deep_indifferent_keys(value) }
+      else
+        obj
+      end
     end
 
     def deep_dup(obj)

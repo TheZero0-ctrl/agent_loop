@@ -5,10 +5,10 @@ module AgentLoop
     class Executor
       class UnsupportedEffect < StandardError; end
 
-      def initialize(emit_adapter:, scheduler_adapter: AgentLoop::Adapters::Scheduler::Inline.new,
+      def initialize(emit_adapter:, scheduled_signal_job_class: nil,
                      tool_adapter: AgentLoop::Adapters::Tools::Null.new)
         @emit_adapter = emit_adapter
-        @scheduler_adapter = scheduler_adapter
+        @scheduled_signal_job_class = scheduled_signal_job_class
         @tool_adapter = tool_adapter
       end
 
@@ -38,9 +38,7 @@ module AgentLoop
             )
             @emit_adapter.emit(signal, target: effect.target)
           when AgentLoop::Effects::Schedule
-            @scheduler_adapter.schedule(delay_ms: effect.delay_ms) do
-              runtime.call(instance, effect.signal)
-            end
+            enqueue_scheduled_signal(effect, instance: instance)
           when AgentLoop::Effects::Stop
             instance.status = :stopped
             instance.metadata[:stop_reason] = effect.reason
@@ -73,6 +71,24 @@ module AgentLoop
       end
 
       private
+
+      def enqueue_scheduled_signal(effect, instance:)
+        job_class = @scheduled_signal_job_class
+        raise UnsupportedEffect, 'Schedule requires a configured job class' unless job_class
+
+        payload = {
+          'instance_id' => instance.id,
+          'agent_class' => instance.agent_class.to_s,
+          'signal' => effect.signal.to_h,
+          'meta' => effect.meta
+        }
+
+        job = job_class
+        job = job.set(wait: effect.delay_ms.to_f / 1000.0) if effect.delay_ms && job.respond_to?(:set)
+        return job.perform_later(payload) if job.respond_to?(:perform_later)
+
+        raise UnsupportedEffect, "Scheduled job class must support perform_later: #{job_class}"
+      end
 
       def run_tool_effect(effect, instance:, runtime:)
         output = @tool_adapter.run(name: effect.name, input: effect.input, instance: instance, runtime: runtime,

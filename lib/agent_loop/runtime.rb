@@ -2,13 +2,15 @@
 
 module AgentLoop
   class Runtime
-    attr_reader :router, :effect_executor, :state_store, :state_op_applicator, :strategy, :event_store, :signal_queue
+    attr_reader :router, :effect_executor, :state_store, :state_op_applicator,
+                :strategy, :event_store, :signal_queue, :effect_queue
 
     def initialize(effect_executor:, router: Router.new, state_store: AgentLoop::StateStores::InMemory.new,
                    state_op_applicator: AgentLoop::StateOps::Applicator.new,
                    strategy: AgentLoop::Strategies::Direct.new,
                    event_store: AgentLoop::EventStores::InMemory.new,
-                   signal_queue: AgentLoop::SignalQueues::InMemory.new)
+                   signal_queue: AgentLoop::SignalQueues::InMemory.new,
+                   effect_queue: AgentLoop::EffectQueues::InMemory.new)
       @router = router
       @effect_executor = effect_executor
       @state_store = state_store
@@ -16,6 +18,7 @@ module AgentLoop
       @strategy = strategy
       @event_store = event_store
       @signal_queue = signal_queue
+      @effect_queue = effect_queue
     end
 
     def call(instance, signal, context: {})
@@ -23,27 +26,36 @@ module AgentLoop
 
       AgentLoop::Notifications.instrument_lifecycle('agent_loop.signal', payload) do
         agent = instance.agent_class.new
+        strategy.init(agent_class: instance.agent_class, context: context) if strategy.respond_to?(:init)
+
+        routed_signal = if instance.agent_class.respond_to?(:handle_signal_with_plugins)
+                          instance.agent_class.handle_signal_with_plugins(signal, context: context)
+                        else
+                          signal
+                        end
 
         current_state = instance.state || state_store.load(instance.id) || agent.initial_state
-        track_signal_context(instance, signal, context)
-        record_event(instance.id, type: 'signal.received', signal: serialize_signal(signal), context: context)
-        instruction = router.instruction_for(instance.agent_class, signal, strategy: strategy, context: context)
+        track_signal_context(instance, routed_signal, context)
+        record_event(instance.id, type: 'signal.received', signal: serialize_signal(routed_signal), context: context)
+        instruction = router.instruction_for(instance.agent_class, routed_signal, strategy: strategy, context: context)
 
         result = AgentLoop::Notifications.instrument_lifecycle('agent_loop.cmd',
                                                                payload.merge(action: instruction.action)) do
-          strategy.cmd(
-            agent: agent,
-            state: current_state,
-            instruction: instruction,
-            context: context.merge(instance_id: instance.id, signal: signal)
-          )
+          execute_cmd(agent: agent, current_state: current_state, instruction: instruction,
+                      signal: routed_signal, instance: instance, context: context)
         end
 
-        final_state = state_op_applicator.apply_all(result.state, result.state_ops)
+        result = transform_result_with_plugins(instance.agent_class, result, instruction: instruction, context: context)
+
+        final_state = if result.ok?
+                        state_op_applicator.apply_all(result.state, result.state_ops)
+                      else
+                        current_state
+                      end
 
         instance.state = final_state
-        instance.status = :active
-        instance.metadata[:state_version] = instance.metadata.fetch(:state_version, 0) + 1
+        instance.status = result.ok? ? :active : :failed
+        increment_state_version(instance) if result.ok?
         state_store.save(instance.id, final_state)
         record_event(
           instance.id,
@@ -54,14 +66,17 @@ module AgentLoop
           effects: result.effects.map { |effect| effect.class.name }
         )
 
-        effect_executor.execute_all(result.effects, instance: instance, runtime: self)
+        enqueue_effects(result.effects, instance: instance, context: context)
+        effect_failures = drain_effects
+
+        final_status, final_error = finalize_runtime_outcome(result, effect_failures)
 
         Result.new(
           state: final_state,
           state_ops: result.state_ops,
           effects: result.effects,
-          status: result.status,
-          error: result.error
+          status: final_status,
+          error: final_error
         )
       end
     rescue AgentLoop::Router::RouteNotFound => e
@@ -80,12 +95,126 @@ module AgentLoop
       end
     end
 
+    def tick(instance, context: {})
+      return :noop unless strategy.respond_to?(:tick)
+
+      strategy.tick(instance: instance, runtime: self, context: context)
+    end
+
+    def snapshot(instance)
+      return { instance_id: instance.id, strategy: strategy.class.name } unless strategy.respond_to?(:snapshot)
+
+      strategy.snapshot(instance: instance)
+    end
+
     private
 
     def record_event(instance_id, event)
       event_store&.append(instance_id, event)
     rescue StandardError
       nil
+    end
+
+    def execute_cmd(agent:, current_state:, instruction:, signal:, instance:, context: {})
+      strategy.cmd(
+        agent: agent,
+        state: current_state,
+        instruction: instruction,
+        context: context.merge(instance_id: instance.id, signal: signal)
+      )
+    rescue StandardError => e
+      error_result(current_state, e)
+    end
+
+    def transform_result_with_plugins(agent_class, result, instruction:, context: {})
+      return result unless agent_class.respond_to?(:transform_result_with_plugins)
+
+      agent_class.transform_result_with_plugins(result, instruction: instruction, context: context)
+    rescue StandardError
+      result
+    end
+
+    def error_result(state, error)
+      code, details = classify_error(error)
+      Result.new(
+        state: state,
+        state_ops: [],
+        effects: [AgentLoop::Effects::Error.new(code: code, message: error.message, details: details)],
+        status: :error,
+        error: { code: code, message: error.message, details: details }
+      )
+    end
+
+    def classify_error(error)
+      case error
+      when AgentLoop::Action::InvalidParams
+        [:invalid_action_params, error.details]
+      when AgentLoop::Action::InvalidOutput
+        [:invalid_action_output, error.details]
+      when AgentLoop::Agent::InvalidState
+        [:invalid_state, error.details]
+      when AgentLoop::Strategies::Fsm::InvalidTransition
+        [:invalid_transition, {}]
+      else
+        [:runtime_execution_failed, {}]
+      end
+    end
+
+    def increment_state_version(instance)
+      instance.metadata[:state_version] = instance.metadata.fetch(:state_version, 0) + 1
+    end
+
+    def enqueue_effects(effects, instance:, context: {})
+      Array(effects).each do |effect|
+        effect_queue.enqueue(effect: effect, instance: instance, context: context)
+      end
+    end
+
+    def drain_effects(limit: nil)
+      failures = []
+
+      effect_queue.drain(runtime: self, limit: limit) do |entry|
+        failure = execute_effect(entry.fetch(:effect), instance: entry.fetch(:instance),
+                                                       context: entry.fetch(:context, {}))
+        failures << failure if failure
+      end
+
+      failures
+    end
+
+    def execute_effect(effect, instance:, context: {})
+      if effect_executor.respond_to?(:execute)
+        effect_executor.execute(effect, instance: instance, runtime: self)
+      else
+        effect_executor.execute_all([effect], instance: instance, runtime: self)
+      end
+      nil
+    rescue StandardError => e
+      record_event(
+        instance.id,
+        type: 'effect.failed',
+        effect: effect.class.name,
+        error_class: e.class.name,
+        error_message: e.message,
+        context: context
+      )
+      instance.status = :failed
+      failure = {
+        code: :effect_execution_failed,
+        message: e.message,
+        effect: effect.class.name,
+        error_class: e.class.name,
+        context: context
+      }
+      instance.metadata[:last_error] = { code: failure[:code], message: failure[:message] }
+      failure
+    end
+
+    def finalize_runtime_outcome(result, effect_failures)
+      return [result.status, result.error] if effect_failures.empty?
+
+      failure = effect_failures.first
+      [:error, failure]
     end
 
     def serialize_signal(signal)
