@@ -18,10 +18,22 @@ The core model is:
 - `Effects::Schedule` uses your job backend for delayed replay
 - `Effects::Spawn` starts real child servers
 
+Quick start:
+
+```ruby
+server = AgentLoop::AgentServer.start(agent: CounterAgent)
+
+server.call(
+  AgentLoop::Signal.new(type: "counter.increment", source: "readme", data: { by: 1 })
+)
+```
+
 This project is still evolving and APIs may change.
 
 Start here:
 
+- [Agent Runtime](https://github.com/TheZero0-ctrl/agent_loop/blob/main/docs/concepts/agent-runtime.md)
+- [Sensors](https://github.com/TheZero0-ctrl/agent_loop/blob/main/docs/concepts/sensors.md)
 - [First Agent](https://github.com/TheZero0-ctrl/agent_loop/blob/main/docs/getting-started/first-agent.md)
 
 ## Development

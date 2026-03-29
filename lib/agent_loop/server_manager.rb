@@ -6,13 +6,15 @@ module AgentLoop
       @registry = registry
     end
 
-    def start(runtime:, instance: nil, agent_class: nil, id: nil, initial_state: nil,
+    def start(runtime:, instance: nil, agent: nil, agent_class: nil, agent_module: nil, id: nil, initial_state: nil,
               max_signal_queue_size: AgentLoop::AgentServer::DEFAULT_MAX_QUEUE_SIZE,
               max_effect_queue_size: AgentLoop::AgentServer::DEFAULT_MAX_QUEUE_SIZE)
       AgentLoop::AgentServer.start(
         runtime: runtime,
+        agent: agent,
         instance: instance,
         agent_class: agent_class,
+        agent_module: agent_module,
         id: id,
         initial_state: initial_state,
         registry: registry,

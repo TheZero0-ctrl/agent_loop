@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+
 module AgentLoop
   class AgentServer
     class QueueOverflow < StandardError
@@ -15,13 +17,18 @@ module AgentLoop
     INTERNAL_SIGNAL_TYPES = [PARENT_DEATH_SIGNAL, /^agent_loop\.child\./].freeze
 
     class << self
-      def start(runtime:, instance: nil, agent_class: nil, id: nil, initial_state: nil,
+      def start(agent: nil, runtime: nil, instance: nil, agent_class: nil, agent_module: nil, id: nil,
+                initial_state: nil,
                 registry: AgentLoop::Registry, max_signal_queue_size: DEFAULT_MAX_QUEUE_SIZE,
                 max_effect_queue_size: DEFAULT_MAX_QUEUE_SIZE)
-        resolved_instance = instance || AgentLoop::Instance.new(
+        runtime ||= AgentLoop.runtime
+        resolved_instance = resolve_instance(
+          agent: agent,
+          instance: instance,
           agent_class: agent_class,
+          agent_module: agent_module,
           id: id,
-          state: initial_state
+          initial_state: initial_state
         )
 
         new(
@@ -53,6 +60,45 @@ module AgentLoop
       end
 
       private
+
+      def resolve_instance(agent:, instance:, agent_class:, agent_module:, id:, initial_state:)
+        provided_instance = instance || (agent if agent.is_a?(AgentLoop::Instance))
+        return provided_instance if provided_instance
+
+        resolved_agent_class =
+          if agent_class
+            agent_class
+          elsif agent_module
+            agent_module
+          elsif agent.is_a?(Class) || agent.is_a?(Module)
+            agent
+          else
+            raise ArgumentError, 'start requires agent:, agent_class:, or instance:'
+          end
+
+        derived_id = id || agent_id_from(agent) || SecureRandom.uuid
+        derived_state = initial_state || agent_state_from(agent)
+
+        AgentLoop::Instance.new(
+          agent_class: resolved_agent_class,
+          id: derived_id,
+          state: derived_state
+        )
+      end
+
+      def agent_id_from(agent)
+        return unless agent
+        return unless agent.respond_to?(:id)
+
+        agent.id
+      end
+
+      def agent_state_from(agent)
+        return unless agent
+        return unless agent.respond_to?(:state)
+
+        agent.state
+      end
 
       def constantize_agent_class(name)
         return name if name.is_a?(Class)
