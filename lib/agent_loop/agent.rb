@@ -50,6 +50,32 @@ module AgentLoop
         @default_state || {}
       end
 
+      def strategy(value = UNSET, **opts)
+        unless value.equal?(UNSET)
+          @strategy_spec = if opts.empty?
+                             value
+                           else
+                             [value, opts]
+                           end
+        end
+
+        @strategy_spec
+      end
+
+      def strategy_opts
+        spec = strategy
+        return {} unless spec.is_a?(Array) && spec.length == 2 && spec[1].is_a?(Hash)
+
+        spec[1]
+      end
+
+      def build_strategy(default: nil)
+        spec = strategy
+        return default unless spec
+
+        instantiate_strategy(spec)
+      end
+
       def initial_state
         base_state = deep_dup(default_state)
         schema_input = deep_merge(base_state, deep_dup(schema_defaults))
@@ -197,6 +223,26 @@ module AgentLoop
       end
 
       private
+
+      def instantiate_strategy(spec)
+        case spec
+        when AgentLoop::Strategies::Base
+          spec
+        when Array
+          strategy_class, options = spec
+          instantiate_strategy_with_options(strategy_class, options || {})
+        when Class
+          instantiate_strategy_with_options(spec, {})
+        else
+          raise ArgumentError, "Unsupported strategy specification: #{spec.inspect}"
+        end
+      end
+
+      def instantiate_strategy_with_options(strategy_class, options)
+        return strategy_class.new if options.nil? || options.empty?
+
+        strategy_class.new(**options)
+      end
 
       def mount_plugins(state)
         plugins.reduce(deep_dup(state)) do |current_state, plugin_entry|

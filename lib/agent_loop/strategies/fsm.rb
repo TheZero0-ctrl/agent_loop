@@ -12,28 +12,43 @@ module AgentLoop
         @initial_step = initial_step
       end
 
-      def cmd(agent:, state:, instruction:, context:)
-        step = current_step(state)
-        allowed_actions = Array(@transitions.fetch(step, []))
+      def cmd(agent:, state:, instructions:, context:)
+        state_op_applicator = AgentLoop::StateOps::Applicator.new
+        current_state = state
+        current_step_value = current_step(current_state)
+        accumulated_state_ops = []
+        accumulated_effects = []
+        status = :ok
+        error = nil
 
-        unless allowed_actions.include?(instruction.action)
-          raise InvalidTransition,
-                "Action #{instruction.action} not allowed from step #{step}"
+        Array(instructions).each do |instruction|
+          allowed_actions = Array(@transitions.fetch(current_step_value, []))
+
+          unless allowed_actions.include?(instruction.action)
+            raise InvalidTransition,
+                  "Action #{instruction.action} not allowed from step #{current_step_value}"
+          end
+
+          result = agent.cmd(current_state, instruction, context: context)
+          next_step = infer_next_step(current_step_value, instruction.action)
+          step_op = AgentLoop::StateOps::SetPath.new(path: [STRATEGY_KEY, :step], value: next_step)
+          step_state_ops = Array(result.state_ops) + [step_op]
+
+          current_state = state_op_applicator.apply_all(result.state, step_state_ops)
+          current_step_value = next_step
+          accumulated_state_ops.concat(step_state_ops)
+          accumulated_effects.concat(Array(result.effects))
+          status = result.status
+          error = result.error
+          break unless result.ok?
         end
 
-        result = agent.cmd(state, instruction, context: context)
-        next_step = infer_next_step(step, instruction.action)
-
-        state_ops = Array(result.state_ops) + [
-          AgentLoop::StateOps::SetPath.new(path: [STRATEGY_KEY, :step], value: next_step)
-        ]
-
         AgentLoop::Result.new(
-          state: result.state,
-          state_ops: state_ops,
-          effects: result.effects,
-          status: result.status,
-          error: result.error
+          state: current_state,
+          state_ops: accumulated_state_ops,
+          effects: accumulated_effects,
+          status: status,
+          error: error
         )
       end
 

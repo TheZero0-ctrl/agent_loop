@@ -3,13 +3,18 @@
 module AgentLoop
   module Strategies
     class Base
-      def init(agent_class:, context: {})
-        _agent_class = agent_class
+      def init(instance:, runtime:, context: {})
+        _instance = instance
+        _runtime = runtime
         _context = context
-        :ok
+        AgentLoop::Result.new(state: instance.state, effects: [])
       end
 
-      def cmd(agent:, state:, instruction:, context:)
+      def cmd(agent:, state:, instructions:, context:)
+        _agent = agent
+        _state = state
+        _instructions = instructions
+        _context = context
         raise NotImplementedError
       end
 
@@ -20,7 +25,8 @@ module AgentLoop
         :noop
       end
 
-      def snapshot(instance:)
+      def snapshot(instance:, context: {})
+        _context = context
         {
           strategy: self.class.name,
           instance_id: instance.id
@@ -28,7 +34,7 @@ module AgentLoop
       end
 
       def signal_routes(_context = {})
-        []
+        [['agent_loop.strategy.tick', :strategy_tick, 100]]
       end
     end
   end

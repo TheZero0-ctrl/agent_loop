@@ -22,8 +22,8 @@ class RouterTest < Minitest::Test
   end
 
   class StrategyWithRoutes < AgentLoop::Strategies::Base
-    def cmd(agent:, state:, instruction:, context:)
-      agent.cmd(state, instruction, context: context)
+    def cmd(agent:, state:, instructions:, context:)
+      AgentLoop::Strategies::Direct.new.cmd(agent: agent, state: state, instructions: instructions, context: context)
     end
 
     def signal_routes(_context = {})

@@ -4,6 +4,7 @@ module AgentLoop
   class Router
     class RouteNotFound < StandardError; end
     Route = Struct.new(:pattern, :target, :priority, :source, :index)
+    STRATEGY_TICK_ACTION = :__strategy_tick__
 
     STRATEGY_PRIORITY = 50
     AGENT_PRIORITY = 0
@@ -113,6 +114,10 @@ module AgentLoop
     end
 
     def target_to_instruction(target, signal)
+      return [target[1], signal.data] if target.is_a?(Array) && target.length == 2 && target[0] == :strategy_cmd
+
+      return [STRATEGY_TICK_ACTION, signal.data] if target == :strategy_tick
+
       if target.is_a?(Array) && target.size == 2 && target[1].is_a?(Hash)
         [target[0], target[1].merge(signal.data || {})]
       else

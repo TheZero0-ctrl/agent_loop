@@ -42,6 +42,37 @@ module AgentLoop
 
       alias start_link start
 
+      def fetch_or_start(agent: nil, runtime: nil, instance: nil, agent_class: nil, agent_module: nil, id: nil,
+                         initial_state: nil,
+                         registry: AgentLoop::Registry, max_signal_queue_size: DEFAULT_MAX_QUEUE_SIZE,
+                         max_effect_queue_size: DEFAULT_MAX_QUEUE_SIZE)
+        runtime ||= AgentLoop.runtime
+        resolved_instance = resolve_instance(
+          agent: agent,
+          instance: instance,
+          agent_class: agent_class,
+          agent_module: agent_module,
+          id: id,
+          initial_state: initial_state
+        )
+
+        existing = whereis(resolved_instance.id, registry: registry)
+        return existing if existing
+
+        start_mutex_for(resolved_instance.id).synchronize do
+          existing = whereis(resolved_instance.id, registry: registry)
+          return existing if existing
+
+          new(
+            runtime: runtime,
+            instance: resolved_instance,
+            registry: registry,
+            max_signal_queue_size: max_signal_queue_size,
+            max_effect_queue_size: max_effect_queue_size
+          ).tap(&:start)
+        end
+      end
+
       def whereis(id, registry: AgentLoop::Registry)
         registry.whereis(id)
       end
@@ -107,6 +138,20 @@ module AgentLoop
           scope.const_get(const_name)
         end
       end
+
+      def start_mutex_for(id)
+        start_mutex_registry_guard.synchronize do
+          start_mutex_registry[id] ||= Mutex.new
+        end
+      end
+
+      def start_mutex_registry
+        @start_mutex_registry ||= {}
+      end
+
+      def start_mutex_registry_guard
+        @start_mutex_registry_guard ||= Mutex.new
+      end
     end
 
     attr_reader :runtime, :instance
@@ -130,13 +175,18 @@ module AgentLoop
     end
 
     def start
+      should_initialize_strategy = false
+
       mutex.synchronize do
         return self if @worker_thread&.alive?
 
         registry.register(instance.id, self)
         @worker_thread = Thread.new { run_loop }
         @worker_thread.name = "agent-loop-server-#{instance.id}" if @worker_thread.respond_to?(:name=)
+        should_initialize_strategy = true
       end
+
+      initialize_strategy_once if should_initialize_strategy
 
       self
     end
@@ -216,7 +266,14 @@ module AgentLoop
     end
 
     def accepts_signal?(signal, context: {})
-      route = runtime.router.resolve(instance.agent_class, signal, strategy: runtime.strategy, context: context)
+      resolved_strategy = runtime.strategy_for(instance.agent_class)
+      strategy_context = context.merge(
+        agent_class: instance.agent_class,
+        strategy: resolved_strategy,
+        strategy_opts: instance.agent_class.respond_to?(:strategy_opts) ? instance.agent_class.strategy_opts : {}
+      )
+      route = runtime.router.resolve(instance.agent_class, signal, strategy: resolved_strategy,
+                                                                   context: strategy_context)
       !route.nil?
     rescue AgentLoop::Router::RouteNotFound, AgentLoop::RuntimeError, StandardError
       false
@@ -264,6 +321,19 @@ module AgentLoop
       raise e
     ensure
       registry.unregister(instance.id)
+    end
+
+    def initialize_strategy_once
+      result = runtime.initialize_strategy(instance, context: {})
+
+      Array(result.effects).each do |effect|
+        enqueue_effect(effect, context: { strategy_init: true })
+      end
+
+      failures = drain_effects
+      final_result = runtime.finalize_result(result, failures)
+      apply_terminal_status(final_result)
+      completion_condition.broadcast if TERMINAL_STATUSES.include?(status)
     end
 
     def process_signal_envelope(envelope)

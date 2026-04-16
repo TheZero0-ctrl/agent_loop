@@ -128,6 +128,35 @@ class ActionAiToolsTest < Minitest::Test
     end
   end
 
+  class DuplicateLookupCustomer < AgentLoop::Action
+    name 'lookup_customer'
+
+    schema do
+      required(:email).filled(:string)
+    end
+
+    def self.run(_params, _context)
+      { ok: true }
+    end
+  end
+
+  class BadToolDescriptorAction < AgentLoop::Action
+    name 'bad_tool_descriptor'
+
+    schema do
+      required(:id).filled(:string)
+    end
+
+    def self.to_tool(strict: nil)
+      _strict = strict
+      { name: 'bad_tool_descriptor', description: 'bad', parameters: nil }
+    end
+
+    def self.run(_params, _context)
+      { ok: true }
+    end
+  end
+
   def test_to_tool_generates_generic_tool_descriptor
     tool = LookupCustomer.to_tool
 
@@ -259,5 +288,32 @@ class ActionAiToolsTest < Minitest::Test
       tool_adapter.run(name: 'effectful_tool_action', input: { id: '123' }, instance: instance, runtime: runtime,
                        meta: {})
     end
+  end
+
+  def test_action_registry_rejects_duplicate_tool_names
+    assert_raises(AgentLoop::Adapters::Tools::ActionRegistry::DuplicateToolName) do
+      AgentLoop::Adapters::Tools::ActionRegistry.new(actions: [LookupCustomer, DuplicateLookupCustomer])
+    end
+  end
+
+  def test_action_registry_rejects_invalid_tool_descriptor
+    assert_raises(AgentLoop::Adapters::Tools::ActionRegistry::InvalidToolDescriptor) do
+      AgentLoop::Adapters::Tools::ActionRegistry.new(actions: [BadToolDescriptorAction])
+    end
+  end
+
+  def test_action_registry_wraps_validation_failures_with_tool_execution_failed
+    tool_adapter = AgentLoop::Adapters::Tools::ActionRegistry.new(actions: [LookupCustomer])
+    emit_adapter = AgentLoop::Adapters::Emitter::InProcess.new
+    effect_executor = AgentLoop::Effects::Executor.new(emit_adapter: emit_adapter, tool_adapter: tool_adapter)
+    runtime = AgentLoop::Runtime.new(effect_executor: effect_executor)
+    instance = AgentLoop::Instance.new(agent_class: ToolRuntimeAgent, id: 'tool-runtime-4')
+
+    error = assert_raises(AgentLoop::Adapters::Tools::ActionRegistry::ToolExecutionFailed) do
+      tool_adapter.run(name: 'lookup_customer', input: {}, instance: instance, runtime: runtime, meta: {})
+    end
+
+    assert_equal 'lookup_customer', error.tool_name
+    refute_empty error.details
   end
 end

@@ -6,7 +6,7 @@ module AgentLoop
       class UnsupportedEffect < StandardError; end
 
       def initialize(emit_adapter:, scheduled_signal_job_class: nil,
-                     tool_adapter: AgentLoop::Adapters::Tools::Null.new,
+                     tool_adapter: AgentLoop::Adapters::Tools::AgentStrategyRegistry.new,
                      server_manager: AgentLoop::ServerManager.new)
         @emit_adapter = emit_adapter
         @scheduled_signal_job_class = scheduled_signal_job_class

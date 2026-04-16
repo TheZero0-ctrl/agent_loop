@@ -29,10 +29,12 @@ module AgentLoop
 
     def process_signal(instance, signal, context: {})
       payload = notification_payload(instance, signal, context)
+      resolved_strategy = strategy_for(instance.agent_class)
+      strategy_context = strategy_context_for(instance: instance, strategy: resolved_strategy, context: context,
+                                              signal: signal)
 
       AgentLoop::Notifications.instrument_lifecycle('agent_loop.signal', payload) do
         agent = instance.agent_class.new
-        strategy.init(agent_class: instance.agent_class, context: context) if strategy.respond_to?(:init)
 
         routed_signal = if instance.agent_class.respond_to?(:handle_signal_with_plugins)
                           instance.agent_class.handle_signal_with_plugins(signal, context: context)
@@ -43,12 +45,14 @@ module AgentLoop
         current_state = instance.state || state_store.load(instance.id) || agent.initial_state
         track_signal_context(instance, routed_signal, context)
         record_event(instance.id, type: 'signal.received', signal: serialize_signal(routed_signal), context: context)
-        instruction = router.instruction_for(instance.agent_class, routed_signal, strategy: strategy, context: context)
+        instruction = router.instruction_for(instance.agent_class, routed_signal, strategy: resolved_strategy,
+                                                                                  context: strategy_context)
 
         result = AgentLoop::Notifications.instrument_lifecycle('agent_loop.cmd',
                                                                payload.merge(action: instruction.action)) do
           execute_cmd(agent: agent, current_state: current_state, instruction: instruction,
-                      signal: routed_signal, instance: instance, context: context)
+                      signal: routed_signal, instance: instance, context: strategy_context,
+                      strategy: resolved_strategy)
         end
 
         result = transform_result_with_plugins(instance.agent_class, result, instruction: instruction, context: context)
@@ -120,15 +124,67 @@ module AgentLoop
     end
 
     def tick(instance, context: {})
-      return :noop unless strategy.respond_to?(:tick)
+      resolved_strategy = strategy_for(instance.agent_class)
+      return :noop unless resolved_strategy.respond_to?(:tick)
 
-      strategy.tick(instance: instance, runtime: self, context: context)
+      resolved_strategy.tick(
+        instance: instance,
+        runtime: self,
+        context: strategy_context_for(instance: instance, strategy: resolved_strategy, context: context)
+      )
     end
 
     def snapshot(instance)
-      return { instance_id: instance.id, strategy: strategy.class.name } unless strategy.respond_to?(:snapshot)
+      resolved_strategy = strategy_for(instance.agent_class)
+      unless resolved_strategy.respond_to?(:snapshot)
+        return { instance_id: instance.id,
+                 strategy: resolved_strategy.class.name }
+      end
 
-      strategy.snapshot(instance: instance)
+      resolved_strategy.snapshot(
+        instance: instance,
+        context: strategy_context_for(instance: instance, strategy: resolved_strategy, context: {})
+      )
+    end
+
+    def initialize_strategy(instance, context: {})
+      resolved_strategy = strategy_for(instance.agent_class)
+      current_state = instance.state || state_store.load(instance.id) || instance.agent_class.new.initial_state
+      return Result.new(state: current_state, effects: []) unless resolved_strategy.respond_to?(:init)
+      return Result.new(state: current_state, effects: []) if instance.metadata[:strategy_initialized]
+
+      output = resolved_strategy.init(
+        instance: instance,
+        runtime: self,
+        context: strategy_context_for(instance: instance, strategy: resolved_strategy, context: context)
+      )
+
+      result = normalize_strategy_result(output, current_state: current_state)
+      final_state = result.ok? ? state_op_applicator.apply_all(result.state, result.state_ops) : current_state
+      instance.state = final_state
+      instance.status = derive_instance_status(result, final_state)
+      increment_state_version(instance) if result.ok?
+      state_store.save(instance.id, final_state)
+      instance.metadata[:strategy_initialized] = true if result.ok?
+
+      Result.new(
+        state: final_state,
+        state_ops: result.state_ops,
+        effects: result.effects,
+        status: result.status,
+        error: result.error
+      )
+    rescue StandardError => e
+      error_result(current_state, e)
+    end
+
+    def strategy_for(agent_class)
+      if agent_class.respond_to?(:build_strategy)
+        resolved = agent_class.build_strategy(default: nil)
+        return resolved if resolved
+      end
+
+      strategy
     end
 
     private
@@ -139,15 +195,48 @@ module AgentLoop
       nil
     end
 
-    def execute_cmd(agent:, current_state:, instruction:, signal:, instance:, context: {})
-      strategy.cmd(
+    def execute_cmd(agent:, current_state:, instruction:, signal:, instance:, strategy:, context: {})
+      if instruction.action == AgentLoop::Router::STRATEGY_TICK_ACTION
+        output = strategy.tick(instance: instance, runtime: self, context: context)
+        return normalize_strategy_result(output, current_state: current_state)
+      end
+
+      output = strategy.cmd(
         agent: agent,
         state: current_state,
-        instruction: instruction,
+        instructions: [instruction],
         context: context.merge(instance_id: instance.id, signal: signal)
       )
+      normalize_strategy_result(output, current_state: current_state)
     rescue StandardError => e
       error_result(current_state, e)
+    end
+
+    def normalize_strategy_result(output, current_state:)
+      return output if output.is_a?(Result)
+
+      if output.is_a?(Array) && output.length == 2
+        state, effects = output
+        return Result.new(state: state || current_state, effects: Array(effects))
+      end
+
+      raise ArgumentError, "Strategy callback must return AgentLoop::Result or [state, effects], got: #{output.inspect}"
+    end
+
+    def strategy_context_for(instance:, strategy:, context:, signal: nil)
+      strategy_opts = if instance.agent_class.respond_to?(:strategy_opts)
+                        instance.agent_class.strategy_opts
+                      else
+                        {}
+                      end
+
+      context.merge(
+        agent_class: instance.agent_class,
+        strategy: strategy,
+        strategy_opts: strategy_opts,
+        instance_id: instance.id,
+        signal: signal
+      )
     end
 
     def transform_result_with_plugins(agent_class, result, instruction:, context: {})
